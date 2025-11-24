@@ -174,6 +174,8 @@
             white-space: pre-wrap;
             word-wrap: break-word;
             font-family: 'Courier New', monospace;
+            max-height: 300px;
+            overflow-y: auto;
         }
 
         .file-upload {
@@ -207,6 +209,34 @@
             display: block;
         }
 
+        .result-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .result-actions button {
+            flex: 1;
+            padding: 10px 15px;
+            font-size: 14px;
+        }
+
+        .save-btn {
+            background: linear-gradient(135deg, #27ae60, #2ecc71);
+        }
+
+        .save-btn:hover:not(:disabled) {
+            box-shadow: 0 5px 15px rgba(39, 174, 96, 0.4);
+        }
+
+        .download-btn {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+        }
+
+        .download-btn:hover:not(:disabled) {
+            box-shadow: 0 5px 15px rgba(231, 76, 60, 0.4);
+        }
+
         @media (max-width: 768px) {
             .main-content {
                 grid-template-columns: 1fr;
@@ -222,6 +252,10 @@
             
             .header h1 {
                 font-size: 2rem;
+            }
+            
+            .result-actions {
+                flex-direction: column;
             }
         }
 
@@ -239,6 +273,12 @@
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
+        }
+
+        .file-content {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #666;
         }
     </style>
 </head>
@@ -281,6 +321,21 @@
                     <div class="result" id="result" style="display: none;">
                         <h3>Natija:</h3>
                         <pre id="resultText"></pre>
+                        <div class="file-content" id="fileContent" style="display: none;">
+                            <strong>O'zgartirilgan fayl tarkibi:</strong>
+                            <pre id="modifiedFileContent"></pre>
+                        </div>
+                        <div class="result-actions">
+                            <button class="save-btn" onclick="saveResultToFile()">
+                                Natijani faylga saqlash
+                            </button>
+                            <button class="download-btn" id="downloadFileBtn" onclick="downloadModifiedFile()" style="display: none;">
+                                O'zgartirilgan faylni yuklab olish
+                            </button>
+                            <button onclick="copyResultToClipboard()">
+                                Natijani nusxalash
+                            </button>
+                        </div>
                     </div>
                 </div>
             </main>
@@ -310,6 +365,9 @@
 
         let currentOperation = null;
         let uploadedFileName = '';
+        let uploadedFileContent = '';
+        let currentResult = '';
+        let modifiedFileContent = '';
 
         // Initialize operations list
         function initializeOperations() {
@@ -409,16 +467,23 @@
         // Handle file upload
         function handleFileUpload(files) {
             if (files.length > 0) {
-                uploadedFileName = files[0].name;
-                const uploadText = document.querySelector('.upload-text');
-                uploadText.innerHTML = `<i>✅</i> ${uploadedFileName} - Yuklandi`;
+                const file = files[0];
+                uploadedFileName = file.name;
                 
-                // Update filename inputs
-                const filenameInput = document.getElementById('input_filename');
-                if (filenameInput) {
-                    filenameInput.value = uploadedFileName;
-                    validateForm();
-                }
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    uploadedFileContent = e.target.result;
+                    const uploadText = document.querySelector('.upload-text');
+                    uploadText.innerHTML = `<i>✅</i> ${uploadedFileName} - Yuklandi (${file.size} bayt)`;
+                    
+                    // Update filename inputs
+                    const filenameInput = document.getElementById('input_filename');
+                    if (filenameInput) {
+                        filenameInput.value = uploadedFileName;
+                        validateForm();
+                    }
+                };
+                reader.readAsText(file);
             }
         }
 
@@ -462,15 +527,31 @@
             
             try {
                 // Simulate API call - in real implementation, this would call your backend
-                const result = await simulateBackendCall(currentOperation.id, formData);
+                const result = await simulateBackendCall(currentOperation.id, formData, uploadedFileContent);
                 
                 // Show result
-                document.getElementById('resultText').textContent = result;
+                currentResult = result.message;
+                modifiedFileContent = result.modifiedContent || '';
+                
+                document.getElementById('resultText').textContent = currentResult;
                 document.getElementById('result').style.display = 'block';
                 
+                // Show modified file content and download button if file was modified
+                if (result.modifiedContent) {
+                    document.getElementById('modifiedFileContent').textContent = result.modifiedContent;
+                    document.getElementById('fileContent').style.display = 'block';
+                    document.getElementById('downloadFileBtn').style.display = 'block';
+                } else {
+                    document.getElementById('fileContent').style.display = 'none';
+                    document.getElementById('downloadFileBtn').style.display = 'none';
+                }
+                
             } catch (error) {
-                document.getElementById('resultText').textContent = 'Xatolik: ' + error.message;
+                currentResult = 'Xatolik: ' + error.message;
+                document.getElementById('resultText').textContent = currentResult;
                 document.getElementById('result').style.display = 'block';
+                document.getElementById('fileContent').style.display = 'none';
+                document.getElementById('downloadFileBtn').style.display = 'none';
             } finally {
                 // Reset button
                 submitBtn.disabled = false;
@@ -479,32 +560,170 @@
             }
         };
 
+        // Save result to file
+        function saveResultToFile() {
+            if (!currentResult) return;
+            
+            // Create a blob with the result text
+            const blob = new Blob([currentResult], { type: 'text/plain' });
+            
+            // Create a temporary URL for the blob
+            const url = URL.createObjectURL(blob);
+            
+            // Create a temporary link element
+            const a = document.createElement('a');
+            a.href = url;
+            
+            // Generate filename based on operation
+            const operationName = currentOperation ? currentOperation.name.replace(/\s+/g, '_') : 'natija';
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            a.download = `${operationName}_${timestamp}.txt`;
+            
+            // Trigger download
+            document.body.appendChild(a);
+            a.click();
+            
+            // Clean up
+            setTimeout(() => {
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }, 100);
+        }
+
+        // Download modified file
+        function downloadModifiedFile() {
+            if (!modifiedFileContent) return;
+            
+            // Create a blob with the modified file content
+            const blob = new Blob([modifiedFileContent], { type: 'text/plain' });
+            
+            // Create a temporary URL for the blob
+            const url = URL.createObjectURL(blob);
+            
+            // Create a temporary link element
+            const a = document.createElement('a');
+            a.href = url;
+            
+            // Generate filename based on original file name and operation
+            const originalName = uploadedFileName.split('.')[0];
+            const extension = uploadedFileName.split('.')[1] || 'txt';
+            const operationName = currentOperation ? currentOperation.name.replace(/\s+/g, '_') : 'modified';
+            a.download = `${originalName}_${operationName}.${extension}`;
+            
+            // Trigger download
+            document.body.appendChild(a);
+            a.click();
+            
+            // Clean up
+            setTimeout(() => {
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }, 100);
+        }
+
+        // Copy result to clipboard
+        function copyResultToClipboard() {
+            if (!currentResult) return;
+            
+            navigator.clipboard.writeText(currentResult)
+                .then(() => {
+                    // Show temporary success message
+                    const saveBtn = document.getElementById('saveResultBtn');
+                    const originalText = saveBtn.textContent;
+                    saveBtn.textContent = 'Nusxalandi!';
+                    saveBtn.style.background = 'linear-gradient(135deg, #27ae60, #2ecc71)';
+                    
+                    setTimeout(() => {
+                        saveBtn.textContent = originalText;
+                        saveBtn.style.background = 'linear-gradient(135deg, #3498db, #2980b9)';
+                    }, 2000);
+                })
+                .catch(err => {
+                    console.error('Nusxalashda xatolik: ', err);
+                    alert('Nusxalashda xatolik yuz berdi');
+                });
+        }
+
         // Simulate backend call - Replace this with actual API calls
-        async function simulateBackendCall(operationId, formData) {
+        async function simulateBackendCall(operationId, formData, fileContent) {
             // Simulate network delay
             await new Promise(resolve => setTimeout(resolve, 2000));
             
-            // Simulate different responses based on operation
-            const responses = {
-                1: `Faylda ${Math.floor(Math.random() * 100) + 1} ta qator mavjud`,
-                2: `Faylda ${Math.floor(Math.random() * 500) + 50} ta so'z mavjud`,
-                3: `Fayl muvaffaqiyatli nusxalandi: ${formData.sourceFile} -> ${formData.destFile}`,
-                4: `${Math.floor(Math.random() * 10) + 1} ta so'z almashtirildi`,
-                5: 'Qatorlar alifbo tartibida tartiblandi',
-                6: 'Barcha fayllar birlashtirildi',
-                7: `Fayl ${Math.floor(Math.random() * 5) + 2} ta qismga bo'lindi`,
-                8: `Qator topildi: "${formData.searchLine}"`,
-                9: 'Fayl muvaffaqiyatli shifrlandi',
-                10: 'Fayl muvaffaqiyatli deshifrlandi',
-                11: `Raqamlar o'rtachasi: ${(Math.random() * 100).toFixed(2)}`,
-                12: `Eng uzun so'z: "superkalifragilistikekspialidocious"`,
-                13: `Faylda ${Math.floor(Math.random() * 1000) + 100} ta belgi mavjud`,
-                14: 'Matn teskari tartibda yozildi',
-                15: 'Raqamlar ajratib olindi',
-                16: `Faylda ${Math.floor(Math.random() * 200) + 50} ta unli mavjud`
-            };
+            // Simulate file processing based on operation
+            let modifiedContent = '';
+            let message = '';
             
-            return responses[operationId] || 'Operatsiya muvaffaqiyatli bajarildi';
+            switch(operationId) {
+                case 1: // Qatorlar soni
+                    const lines = fileContent.split('\n').length;
+                    message = `Faylda ${lines} ta qator mavjud`;
+                    break;
+                    
+                case 2: // So'zlar soni
+                    const words = fileContent.split(/\s+/).filter(word => word.length > 0).length;
+                    message = `Faylda ${words} ta so'z mavjud`;
+                    break;
+                    
+                case 4: // So'zni almashtirish
+                    modifiedContent = fileContent.replace(new RegExp(formData.searchWord, 'g'), formData.replaceWord);
+                    const replacements = (fileContent.match(new RegExp(formData.searchWord, 'g')) || []).length;
+                    message = `${replacements} ta so'z almashtirildi`;
+                    break;
+                    
+                case 5: // Qatorlarni tartiblash
+                    const sortedLines = fileContent.split('\n').sort();
+                    modifiedContent = sortedLines.join('\n');
+                    message = 'Qatorlar alifbo tartibida tartiblandi';
+                    break;
+                    
+                case 8: // Qator qidirish
+                    const foundLines = fileContent.split('\n').filter(line => 
+                        line.includes(formData.searchLine)
+                    );
+                    message = foundLines.length > 0 
+                        ? `Topilgan qatorlar:\n${foundLines.join('\n')}`
+                        : 'Qator topilmadi';
+                    break;
+                    
+                case 9: // Shifrlash
+                    modifiedContent = btoa(fileContent); // Base64 encoding as simple "encryption"
+                    message = 'Fayl muvaffaqiyatli shifrlandi';
+                    break;
+                    
+                case 10: // Deshifrlash
+                    try {
+                        modifiedContent = atob(fileContent);
+                        message = 'Fayl muvaffaqiyatli deshifrlandi';
+                    } catch (e) {
+                        message = 'Faylni deshifrlashda xatolik';
+                    }
+                    break;
+                    
+                case 14: // Teskari yozish
+                    modifiedContent = fileContent.split('').reverse().join('');
+                    message = 'Matn teskari tartibda yozildi';
+                    break;
+                    
+                case 15: // Raqamlarni ajratish
+                    const numbers = fileContent.match(/\d+/g) || [];
+                    modifiedContent = numbers.join('\n');
+                    message = `Fayldan ${numbers.length} ta raqam ajratildi`;
+                    break;
+                    
+                case 16: // Unlilar soni
+                    const vowels = fileContent.match(/[aeiouAEIOUаеёиоуыэюяАЕЁИОУЫЭЮЯ]/g) || [];
+                    message = `Faylda ${vowels.length} ta unli mavjud`;
+                    break;
+                    
+                default:
+                    message = 'Operatsiya muvaffaqiyatli bajarildi';
+                    modifiedContent = fileContent; // Return original content for other operations
+            }
+            
+            return {
+                message: message,
+                modifiedContent: modifiedContent
+            };
         }
 
         // Drag and drop functionality
